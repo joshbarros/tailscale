@@ -447,6 +447,13 @@ func (r *ProxyGroupReconciler) maybeProvision(ctx context.Context, tsClient tscl
 	}
 	ss = applyProxyClassToStatefulSet(proxyClass, ss, cfg, logger)
 
+	// The kube-apiserver ProxyGroup runs k8s-proxy, which does not serve the
+	// /livez and /readyz endpoints, so probes are only wired for the
+	// containerboot-based proxy types.
+	if pg.Spec.Type != tsapi.ProxyGroupTypeKubernetesAPIServer {
+		applyHealthzProbes(proxyClass, ss)
+	}
+
 	if _, err := createOrUpdate(ctx, r.Client, r.tsNamespace, ss, func(s *appsv1.StatefulSet) {
 		s.Spec = ss.Spec
 		s.ObjectMeta.Labels = ss.ObjectMeta.Labels
