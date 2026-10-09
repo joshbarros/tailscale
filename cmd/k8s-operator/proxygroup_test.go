@@ -1663,6 +1663,145 @@ func TestKubeAPIServerStatusConditionFlow(t *testing.T) {
 	expectEqual(t, fc, pg, omitPGStatusConditionMessages)
 }
 
+func TestProxyGroupReplacesStatefulSetForPodManagementPolicy(t *testing.T) {
+	pg := &tsapi.ProxyGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test",
+			Finalizers: []string{FinalizerName},
+			Generation: 1,
+		},
+		Spec: tsapi.ProxyGroupSpec{
+			Type:     tsapi.ProxyGroupTypeEgress,
+			Replicas: new(int32(1)),
+		},
+	}
+	fc := fake.NewClientBuilder().
+		WithScheme(tsapi.GlobalScheme).
+		WithObjects(pg).
+		WithStatusSubresource(pg).
+		Build()
+	r := &ProxyGroupReconciler{
+		tsNamespace:  tsNamespace,
+		tsProxyImage: testProxyImage,
+		Client:       fc,
+		log:          zap.Must(zap.NewDevelopment()).Sugar(),
+		clients:      tsclient.NewProvider(&fakeTSClient{}),
+		clock:        tstest.NewClock(tstest.ClockOpts{}),
+		reissuer:     tailscaled.NewReissuer(),
+	}
+	key := client.ObjectKey{Namespace: tsNamespace, Name: pg.Name}
+	getPolicy := func() (appsv1.PodManagementPolicyType, bool) {
+		t.Helper()
+		ss := new(appsv1.StatefulSet)
+		if err := fc.Get(t.Context(), key, ss); apierrors.IsNotFound(err) {
+			return "", false
+		} else if err != nil {
+			t.Fatalf("getting StatefulSet: %v", err)
+		}
+		return ss.Spec.PodManagementPolicy, true
+	}
+
+	expectReconciled(t, r, "", pg.Name)
+	if got, _ := getPolicy(); got != appsv1.ParallelPodManagement {
+		t.Fatalf("PodManagementPolicy = %q, want %q", got, appsv1.ParallelPodManagement)
+	}
+
+	// Simulate a StatefulSet created by an older operator version.
+	mustUpdate(t, fc, tsNamespace, pg.Name, func(ss *appsv1.StatefulSet) {
+		ss.Spec.PodManagementPolicy = appsv1.OrderedReadyPodManagement
+	})
+	expectReconciled(t, r, "", pg.Name)
+	if _, ok := getPolicy(); ok {
+		t.Fatal("StatefulSet with OrderedReady policy not deleted")
+	}
+
+	expectReconciled(t, r, "", pg.Name)
+	if got, _ := getPolicy(); got != appsv1.ParallelPodManagement {
+		t.Fatalf("PodManagementPolicy after replacement = %q, want %q", got, appsv1.ParallelPodManagement)
+	}
+}
+
+func TestProxyGroupEvictsStuckPods(t *testing.T) {
+	pg := &tsapi.ProxyGroup{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test",
+			Finalizers: []string{FinalizerName},
+			Generation: 1,
+		},
+		Spec: tsapi.ProxyGroupSpec{
+			Type:     tsapi.ProxyGroupTypeEgress,
+			Replicas: new(int32(3)),
+		},
+	}
+	fc := fake.NewClientBuilder().
+		WithScheme(tsapi.GlobalScheme).
+		WithObjects(pg).
+		WithStatusSubresource(pg).
+		Build()
+	r := &ProxyGroupReconciler{
+		tsNamespace:  tsNamespace,
+		tsProxyImage: testProxyImage,
+		Client:       fc,
+		log:          zap.Must(zap.NewDevelopment()).Sugar(),
+		clients:      tsclient.NewProvider(&fakeTSClient{}),
+		clock:        tstest.NewClock(tstest.ClockOpts{}),
+		reissuer:     tailscaled.NewReissuer(),
+	}
+	expectReconciled(t, r, "", pg.Name)
+
+	for name, p := range map[string]struct {
+		revision string
+		ready    bool
+	}{
+		"test-0": {revision: "test-old"},
+		"test-1": {revision: "test-old", ready: true},
+		"test-2": {revision: "test-new"},
+	} {
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: tsNamespace,
+				Labels:    pgLabels(pg.Name, map[string]string{appsv1.ControllerRevisionHashLabelKey: p.revision}),
+			},
+		}
+		if p.ready {
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		}
+		mustCreate(t, fc, pod)
+	}
+	podNames := func() []string {
+		t.Helper()
+		pods := new(corev1.PodList)
+		if err := fc.List(t.Context(), pods, client.InNamespace(tsNamespace)); err != nil {
+			t.Fatalf("listing Pods: %v", err)
+		}
+		var names []string
+		for _, pod := range pods.Items {
+			names = append(names, pod.Name)
+		}
+		slices.Sort(names)
+		return names
+	}
+
+	// The controller hasn't observed the latest spec, so the update revision can't be trusted.
+	mustUpdateStatus(t, fc, tsNamespace, pg.Name, func(ss *appsv1.StatefulSet) {
+		ss.Status.UpdateRevision = "test-new"
+		ss.Status.ObservedGeneration = ss.Generation - 1
+	})
+	expectReconciled(t, r, "", pg.Name)
+	if got, want := podNames(), []string{"test-0", "test-1", "test-2"}; !slices.Equal(got, want) {
+		t.Fatalf("Pods = %v, want %v", got, want)
+	}
+
+	mustUpdateStatus(t, fc, tsNamespace, pg.Name, func(ss *appsv1.StatefulSet) {
+		ss.Status.ObservedGeneration = ss.Generation
+	})
+	expectReconciled(t, r, "", pg.Name)
+	if got, want := podNames(), []string{"test-1", "test-2"}; !slices.Equal(got, want) {
+		t.Fatalf("Pods = %v, want %v", got, want)
+	}
+}
+
 func TestKubeAPIServerType_DoesNotOverwriteServicesConfig(t *testing.T) {
 	fc := fake.NewClientBuilder().
 		WithScheme(tsapi.GlobalScheme).
