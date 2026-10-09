@@ -89,6 +89,9 @@ func pgStatefulSet(pg *tsapi.ProxyGroup, namespace, image, tsFirewallMode string
 		OwnerReferences: pgOwnerReference(pg),
 	}
 	ss.Spec.Replicas = new(pgReplicas(pg))
+	// Start Pods in parallel so one that isn't ready yet, e.g. while its
+	// device awaits approval, doesn't hold back the others.
+	ss.Spec.PodManagementPolicy = appsv1.ParallelPodManagement
 	ss.Spec.Selector = &metav1.LabelSelector{
 		MatchLabels: pgLabels(pg.Name, nil),
 	}

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	xslices "golang.org/x/exp/slices"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -454,13 +456,23 @@ func (r *ProxyGroupReconciler) maybeProvision(ctx context.Context, tsClient tscl
 		applyHealthzProbes(proxyClass, ss)
 	}
 
-	if _, err := createOrUpdate(ctx, r.Client, r.tsNamespace, ss, func(s *appsv1.StatefulSet) {
+	if replaced, err := r.maybeReplaceStatefulSet(ctx, ss, logger); err != nil {
+		return r.notReadyErrf(pg, logger, "failed to replace StatefulSet: %w", err)
+	} else if replaced {
+		return notReady(reasonProxyGroupCreating, "waiting for StatefulSet to be replaced to update its Pod management policy")
+	}
+
+	updatedSS, err := createOrUpdate(ctx, r.Client, r.tsNamespace, ss, func(s *appsv1.StatefulSet) {
 		s.Spec = ss.Spec
 		s.ObjectMeta.Labels = ss.ObjectMeta.Labels
 		s.ObjectMeta.Annotations = ss.ObjectMeta.Annotations
 		s.ObjectMeta.OwnerReferences = ss.ObjectMeta.OwnerReferences
-	}); err != nil {
+	})
+	if err != nil {
 		return r.notReadyErrf(pg, logger, "error provisioning StatefulSet: %w", err)
+	}
+	if err := r.evictStuckPods(ctx, updatedSS, logger); err != nil {
+		return r.notReadyErrf(pg, logger, "error evicting stuck Pods: %w", err)
 	}
 
 	mo := &metricsOpts{
@@ -542,6 +554,75 @@ func (r *ProxyGroupReconciler) maybeUpdateStatus(ctx context.Context, logger *za
 	tsoperator.SetProxyGroupCondition(pg, tsapi.ProxyGroupReady, status, reason, message, pg.Generation, r.clock, logger)
 
 	return nil
+}
+
+// maybeReplaceStatefulSet deletes the ProxyGroup's existing StatefulSet if its
+// Pod management policy differs from the one in ss. Kubernetes doesn't allow
+// that field to change on an existing StatefulSet, so it has to be deleted and
+// created again. The Pods are orphaned rather than deleted, so they keep
+// serving until a later reconcile creates the new StatefulSet, which adopts
+// them. It reports whether the StatefulSet is being replaced.
+func (r *ProxyGroupReconciler) maybeReplaceStatefulSet(ctx context.Context, ss *appsv1.StatefulSet, logger *zap.SugaredLogger) (bool, error) {
+	existing := new(appsv1.StatefulSet)
+	err := r.Get(ctx, client.ObjectKeyFromObject(ss), existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("failed to get StatefulSet: %w", err)
+	case !existing.DeletionTimestamp.IsZero():
+		return true, nil
+	}
+	// The API server defaults an unset policy to OrderedReady.
+	current := cmp.Or(existing.Spec.PodManagementPolicy, appsv1.OrderedReadyPodManagement)
+	desired := cmp.Or(ss.Spec.PodManagementPolicy, appsv1.OrderedReadyPodManagement)
+	if current == desired {
+		return false, nil
+	}
+	logger.Infof("Deleting StatefulSet %q, keeping its Pods, to change its Pod management policy from %q to %q; it is recreated on the next reconcile", existing.Name, current, desired)
+	if err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationOrphan)); err != nil && !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to delete StatefulSet: %w", err)
+	}
+	return true, nil
+}
+
+// evictStuckPods evicts the Pods of ss that are not ready and are from an older
+// revision, so that they are recreated from the current one. During a rolling
+// update, the StatefulSet controller doesn't replace a Pod while too many are
+// unavailable, so without this a change that fixes or reverts one that left
+// Pods unready would never roll out.
+func (r *ProxyGroupReconciler) evictStuckPods(ctx context.Context, ss *appsv1.StatefulSet, logger *zap.SugaredLogger) error {
+	// The update revision is out of date until the controller observes the latest spec.
+	if ss.Status.ObservedGeneration != ss.Generation || ss.Status.UpdateRevision == "" {
+		return nil
+	}
+	pods := new(corev1.PodList)
+	if err := r.List(ctx, pods, client.InNamespace(ss.Namespace), client.MatchingLabels(ss.Spec.Selector.MatchLabels)); err != nil {
+		return fmt.Errorf("failed to list Pods: %w", err)
+	}
+	for _, pod := range pods.Items {
+		if pod.Labels[appsv1.ControllerRevisionHashLabelKey] == ss.Status.UpdateRevision || !pod.DeletionTimestamp.IsZero() || podReady(&pod) {
+			continue
+		}
+		logger.Infof("Evicting Pod %q, which is not ready and is from an older StatefulSet revision, so it is recreated from %q", pod.Name, ss.Status.UpdateRevision)
+		err := r.SubResource("eviction").Create(ctx, &pod, &policyv1.Eviction{})
+		switch {
+		case apierrors.IsTooManyRequests(err):
+			logger.Infof("Eviction of Pod %q blocked by a PodDisruptionBudget: %v", pod.Name, err)
+		case err != nil && !apierrors.IsNotFound(err):
+			return fmt.Errorf("failed to evict Pod %q: %w", pod.Name, err)
+		}
+	}
+	return nil
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 func (r *ProxyGroupReconciler) ensureNodePortServiceCreated(ctx context.Context, pg *tsapi.ProxyGroup, pc *tsapi.ProxyClass) (map[string]uint16, *uint16, error) {
