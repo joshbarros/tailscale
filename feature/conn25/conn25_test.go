@@ -2171,7 +2171,7 @@ func TestHandleAddressAssignmentDropsStaleGeneration(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for AuthReconfigAsync to be called")
 	}
-	if _, ok := c.lookupTransitIPsByConnKey(connectorPeer.Key()); !ok {
+	if _, ok := c.lookupTransitIPsByConnID(connectorPeer.ID()); !ok {
 		t.Fatal("control assignment did not register a transit IP for the connector")
 	}
 
@@ -2182,7 +2182,7 @@ func TestHandleAddressAssignmentDropsStaleGeneration(t *testing.T) {
 	if err := ext.handleAddressAssignment(context.Background(), *as); err != nil {
 		t.Errorf("handling an assignment from before the reset: got error %v, want nil", err)
 	}
-	if _, ok := c.lookupTransitIPsByConnKey(connectorPeer.Key()); ok {
+	if _, ok := c.lookupTransitIPsByConnID(connectorPeer.ID()); ok {
 		t.Error("connector from before the reset got transit IPs registered")
 	}
 	select {
@@ -3286,7 +3286,7 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 	ext.conn25.reconfig(cfg)
 
 	type lookup struct {
-		connKey     key.NodePublic
+		connID      tailcfg.NodeID
 		expectedIPs []netip.Prefix
 		expectedOk  bool
 	}
@@ -3317,14 +3317,14 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 			},
 			lookups: []lookup{
 				{
-					connKey: connectorPeers[0].Key(),
+					connID: connectorPeers[0].ID(),
 					expectedIPs: []netip.Prefix{
 						transitIPs[0],
 					},
 					expectedOk: true,
 				},
 				{
-					connKey:     connectorPeers[1].Key(),
+					connID:      connectorPeers[1].ID(),
 					expectedIPs: nil,
 					expectedOk:  false,
 				},
@@ -3344,7 +3344,7 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 			},
 			lookups: []lookup{
 				{
-					connKey: connectorPeers[0].Key(),
+					connID: connectorPeers[0].ID(),
 					expectedIPs: []netip.Prefix{
 						transitIPs[0],
 						transitIPs[1],
@@ -3367,7 +3367,7 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 			},
 			lookups: []lookup{
 				{
-					connKey: connectorPeers[0].Key(),
+					connID: connectorPeers[0].ID(),
 					expectedIPs: []netip.Prefix{
 						transitIPs[0],
 						transitIPs[1],
@@ -3375,7 +3375,7 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 					expectedOk: true,
 				},
 				{
-					connKey: connectorPeers[1].Key(),
+					connID: connectorPeers[1].ID(),
 					expectedIPs: []netip.Prefix{
 						transitIPs[2],
 					},
@@ -3403,7 +3403,7 @@ func TestHandleAddressAssignmentStoresTransitIPs(t *testing.T) {
 
 			// Check that each of the lookups behaves as expected
 			for i, lu := range tt.lookups {
-				got, ok := ext.conn25.client.lookupTransitIPsByConnKey(lu.connKey)
+				got, ok := ext.conn25.client.lookupTransitIPsByConnID(lu.connID)
 				if ok != lu.expectedOk {
 					t.Fatalf("unexpected ok result at index %d wanted %v, got %v", i, lu.expectedOk, ok)
 				}
