@@ -17,6 +17,9 @@ var testMatrix = []struct {
 	{name: "testPeerAPINotReachableFromLAN_Ubuntu2404", fn: func(t *testing.T) { testPeerAPINotReachableFromLAN(t, vmtest.Ubuntu2404) }},
 	{name: "testPeerAPINotReachableFromLAN_Fedora43", fn: func(t *testing.T) { testPeerAPINotReachableFromLAN(t, vmtest.Fedora43) }},
 	{name: "testPeerAPINotReachableFromLAN_Debian13", fn: func(t *testing.T) { testPeerAPINotReachableFromLAN(t, vmtest.Debian13) }},
+	{name: "testTailscaleSSHForOS_Ubuntu2404", fn: func(t *testing.T) { testTailscaleSSHForOS(t, vmtest.Ubuntu2404) }},
+	{name: "testTailscaleSSHForOS_Fedora43", fn: func(t *testing.T) { testTailscaleSSHForOS(t, vmtest.Fedora43) }},
+	{name: "testTailscaleSSHForOS_Debian13", fn: func(t *testing.T) { testTailscaleSSHForOS(t, vmtest.Debian13) }},
 	{name: "testSubnetRouterForOS_Ubuntu2404", fn: func(t *testing.T) { testSubnetRouterForOS(t, vmtest.Ubuntu2404) }},
 	{name: "testSubnetRouterForOS_Fedora43", fn: func(t *testing.T) { testSubnetRouterForOS(t, vmtest.Fedora43) }},
 	{name: "testSubnetRouterForOS_Debian13", fn: func(t *testing.T) { testSubnetRouterForOS(t, vmtest.Debian13) }},
@@ -29,10 +32,4 @@ var testMatrix = []struct {
 	{name: "testSiteToSite_Debian13_Ubuntu2404", fn: func(t *testing.T) { testSiteToSite(t, vmtest.Debian13, vmtest.Ubuntu2404) }},
 	{name: "testSiteToSite_Debian13_Fedora43", fn: func(t *testing.T) { testSiteToSite(t, vmtest.Debian13, vmtest.Fedora43) }},
 	{name: "testSiteToSite_Debian13_Debian13", fn: func(t *testing.T) { testSiteToSite(t, vmtest.Debian13, vmtest.Debian13) }},
-}
-
-func TestMatrix(t *testing.T) {
-	for _, tt := range testMatrix {
-		t.Run(tt.name, tt.fn)
-	}
 }
