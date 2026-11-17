@@ -37,6 +37,7 @@ var implicitDefinitions = []*setting.Definition{
 	setting.NewDefinition(pkey.FlushDNSOnSessionUnlock, setting.DeviceSetting, setting.BooleanValue),
 	setting.NewDefinition(pkey.EncryptState, setting.DeviceSetting, setting.BooleanValue),
 	setting.NewDefinition(pkey.Hostname, setting.DeviceSetting, setting.StringValue),
+	setting.NewDefinition(pkey.HideWindowedUI, setting.UserSetting, setting.BooleanValue),
 	setting.NewDefinition(pkey.LogSCMInteractions, setting.DeviceSetting, setting.BooleanValue),
 	setting.NewDefinition(pkey.LogTarget, setting.DeviceSetting, setting.StringValue),
 	setting.NewDefinition(pkey.MachineCertificateSubject, setting.DeviceSetting, setting.StringValue),
