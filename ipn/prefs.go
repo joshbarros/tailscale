@@ -702,32 +702,34 @@ func (p *Prefs) Equals(p2 *Prefs) bool {
 		p.ExitNodeAllowLANAccess == p2.ExitNodeAllowLANAccess &&
 		p.CorpDNS == p2.CorpDNS &&
 		p.RunSSH == p2.RunSSH &&
-		p.Sync.Normalized() == p2.Sync.Normalized() &&
 		p.RunWebClient == p2.RunWebClient &&
 		p.WantRunning == p2.WantRunning &&
 		p.LoggedOut == p2.LoggedOut &&
-		p.NotepadURLs == p2.NotepadURLs &&
 		p.ShieldsUp == p2.ShieldsUp &&
+		slices.Equal(p.AdvertiseTags, p2.AdvertiseTags) &&
+		p.Hostname == p2.Hostname &&
+		p.NotepadURLs == p2.NotepadURLs &&
+		p.ForceDaemon == p2.ForceDaemon &&
+		// TODO(alexc): We don't compare the value of Egg, a debugging flag
+		// that isn't used anywhere. Should we?
+		slices.Equal(p.AdvertiseRoutes, p2.AdvertiseRoutes) &&
+		slices.Equal(p.AdvertiseServices, p2.AdvertiseServices) &&
+		p.Sync.Normalized() == p2.Sync.Normalized() &&
 		p.NoSNAT == p2.NoSNAT &&
 		p.NoStatefulFiltering == p2.NoStatefulFiltering &&
 		p.NetfilterMode == p2.NetfilterMode &&
 		p.OperatorUser == p2.OperatorUser &&
-		p.Hostname == p2.Hostname &&
-		p.ForceDaemon == p2.ForceDaemon &&
-		slices.Equal(p.AdvertiseRoutes, p2.AdvertiseRoutes) &&
-		slices.Equal(p.AdvertiseTags, p2.AdvertiseTags) &&
-		slices.Equal(p.AdvertiseServices, p2.AdvertiseServices) &&
-		p.Persist.Equals(p2.Persist) &&
 		p.ProfileName == p2.ProfileName &&
 		p.AutoUpdate.Equals(p2.AutoUpdate) &&
 		p.AppConnector == p2.AppConnector &&
 		p.PostureChecking == p2.PostureChecking &&
-		slices.EqualFunc(p.DriveShares, p2.DriveShares, drive.SharesEqual) &&
 		p.NetfilterKind == p2.NetfilterKind &&
 		p.Tailnet == p2.Tailnet &&
 		p.RemoteConfig == p2.RemoteConfig &&
+		slices.EqualFunc(p.DriveShares, p2.DriveShares, drive.SharesEqual) &&
 		compareUint16Ptrs(p.RelayServerPort, p2.RelayServerPort) &&
-		slices.Equal(p.RelayServerStaticEndpoints, p2.RelayServerStaticEndpoints)
+		slices.Equal(p.RelayServerStaticEndpoints, p2.RelayServerStaticEndpoints) &&
+		p.Persist.Equals(p2.Persist)
 }
 
 func (au AutoUpdatePrefs) Pretty() string {
